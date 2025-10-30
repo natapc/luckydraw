@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Lucky Draw — Setup (Name, Tag)</title>
+<style>
+  :root{ --bg:#0b0f1a; --panel:#0e1526; --accent:#00d4ff; --accent2:#7c5cff; --text:#ecf3ff; --muted:#9fb2d0 }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial;color:var(--text);
+        background:radial-gradient(1400px 1000px at 10% 10%, #0f1b33 0%, #090d17 70%) fixed}
+  .wrap{max-width:980px;margin:28px auto;padding:20px 24px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}
+  h1{margin:0;font-size:22px;letter-spacing:.2px}
+  a.btnlink{padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);color:var(--text);text-decoration:none}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+        border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:16px;margin-top:12px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  textarea,input{width:100%;background:rgba(255,255,255,.03);color:var(--text);
+    border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:12px}
+  textarea{min-height:260px;resize:vertical}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .btn{appearance:none;border:none;border-radius:12px;padding:11px 16px;font-weight:700;cursor:pointer;
+       background:linear-gradient(90deg,var(--accent),var(--accent2));color:#05121e;box-shadow:0 8px 18px rgba(124,92,255,.3)}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid rgba(255,255,255,.14)}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chip{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:var(--text);
+        padding:6px 10px;border-radius:999px;font-size:12px}
+  .muted{color:var(--muted)} .tiny{font-size:12px}
+  .ok{color:#34d399}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>Lucky Draw — Setup</h1>
+    <a class="btnlink" href="./lucky-draw.html">Go to Draw ➜</a>
+  </div>
+
+  <div class="card">
+    <label for="rows">Roster (Single column: <strong>Name, Tag</strong>) — 1 line per person • Delimiters supported: <code>, ; | TAB</code></label>
+    <textarea id="rows" placeholder="Alice, woman
+Bob, man
+Charlie, staff"></textarea>
+
+    <div class="row" style="margin-top:10px">
+      <div style="flex:1;min-width:280px">
+        <label for="posmap">Tag Mapping (e.g. <code>woman=Female, man=Male</code>)</label>
+        <input id="posmap" placeholder="woman=Female, man=Male" />
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <button class="btn" id="importBtn">Import .csv/.txt</button>
+        <input id="fileInput" type="file" accept=".csv,.txt" style="display:none" />
+        <button class="btn ghost" id="paste">Paste Sample</button>
+        <button class="btn ghost" id="shuffle">Shuffle List</button>
+        <button class="btn ghost" id="clear">Clear All</button>
+      </div>
+    </div>
+
+    <div class="chips">
+      <div class="chip">Total: <span id="total">0</span></div>
+      <div class="chip"><span id="pos1n">Tag 1</span>: <span id="pos1c">0</span></div>
+      <div class="chip"><span id="pos2n">Tag 2</span>: <span id="pos2c">0</span></div>
+      <div class="chip muted tiny" id="status">—</div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="save">Save to Browser</button>
+      <button class="btn ghost" id="export">Export (.txt)</button>
+    </div>
+  </div>
+
+  <div class="tiny muted" style="margin-top:10px">
+    Data is stored locally in your browser (localStorage). Open the Draw page to spin immediately.
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const rowsTA = $('rows'),
+        posMapInput = $('posmap'),
+        total = $('total'),
+        pos1c = $('pos1c'), pos2c = $('pos2c'),
+        pos1n = $('pos1n'), pos2n = $('pos2n'),
+        status = $('status');
+  const pasteBtn=$('paste'), clearBtn=$('clear'), saveBtn=$('save'), exportBtn=$('export');
+  const importBtn=$('importBtn'), fileInput=$('fileInput'), shuffleBtn=$('shuffle');
+
+  const KEY_POOL='LD_POOL', KEY_POSMAP='LD_POSMAP';
+
+  function parseMapping(s){
+    const map=Object.create(null); if(!s) return map;
+    s.split(',').map(x=>x.trim()).filter(Boolean).forEach(pair=>{
+      const m=pair.split('=');
+      if(m.length>=2){ const k=m[0].trim(); const v=m.slice(1).join('=').trim(); if(k) map[k]=v||k; }
+    });
+    return map;
+  }
+  function splitLine(line){ const parts=line.split(/[,;|\t]/); return [(parts[0]||'').trim(), (parts[1]||'').trim()]; }
+
+  function parseRows(){
+    const map=parseMapping(posMapInput.value);
+    const raw=(rowsTA.value||'').replace(/\r/g,'');
+    const lines=raw.split('\n');
+    const out=[], seen=new Set();
+    let start=0; if(lines.length){const h=(lines[0]||'').toLowerCase(); if(h.includes('name')&&h.includes('tag')) start=1;}
+    for(let i=start;i<lines.length;i++){
+      const ln=lines[i].trim(); if(!ln) continue;
+      const [nm, psRaw]=splitLine(ln); if(!nm) continue;
+      const label=(map[psRaw] ?? map[psRaw?.toLowerCase?.()] ?? psRaw) || '';
+      const key = nm+'|'+label; if(seen.has(key)) continue; seen.add(key);
+      out.push({name:nm, positionRaw:psRaw, positionLabel:label});
+    }
+    return out;
+  }
+
+  function tagCounts(pool){
+    const c={}; for(const p of pool){ const r=(p.positionRaw||'').trim(); if(!r) continue; c[r]=(c[r]||0)+1; } return c;
+  }
+
+  // >>> UPDATED: Tag1/Tag2 = first two unique raw tags encountered from data
+  function refreshCounters(){
+    const pool=parseRows();
+    total.textContent=pool.length;
+
+    // Determine Tag1 (first tag encountered) and Tag2 (next distinct tag)
+    let tag1='', tag2='';
+    for(const p of pool){
+      const r=(p.positionRaw||'').trim();
+      if(!r) continue;
+      if(!tag1){ tag1=r; continue; }
+      if(r!==tag1 && !tag2){ tag2=r; break; }
+    }
+
+    const c=tagCounts(pool);
+
+    // Set chip names to the actual raw tag values found
+    pos1n.textContent = tag1 || 'Tag 1';
+    pos2n.textContent = tag2 || 'Tag 2';
+
+    // Update counts
+    pos1c.textContent = tag1 ? (c[tag1]||0) : 0;
+    pos2c.textContent = tag2 ? (c[tag2]||0) : 0;
+  }
+
+  // load existing
+  try{
+    const poolJSON=localStorage.getItem(KEY_POOL);
+    const mapStr=localStorage.getItem(KEY_POSMAP)||'';
+    if(poolJSON){
+      const pool=JSON.parse(poolJSON);
+      // Render as "Name, Tag"
+      rowsTA.value = pool.map(x=>`${x.name}${x.positionRaw? ', ' + x.positionRaw : ''}`).join('\n');
+    }
+    posMapInput.value = mapStr;
+    refreshCounters();
+  }catch(e){}
+
+  // events
+  ;['input','change','keyup','paste','beforeinput','compositionend','blur','focus'].forEach(ev=>{
+    rowsTA.addEventListener(ev, refreshCounters);
+    posMapInput.addEventListener(ev, refreshCounters);
+  });
+
+  pasteBtn.addEventListener('click', ()=>{
+    rowsTA.value=['Alice, woman','Bob, man','Charlie, woman','Dana, staff','Eli, lawyer','Fah, staff'].join('\n');
+    posMapInput.value='woman=Female, man=Male, staff=Staff, lawyer=Lawyer';
+    refreshCounters();
+  });
+
+  // Fisher–Yates shuffle on the textarea lines (skip header if present)
+  shuffleBtn.addEventListener('click', ()=>{
+    const raw=(rowsTA.value||'').replace(/\r/g,'').split('\n');
+    if(!raw.length) return;
+    let start=0; const first=(raw[0]||'').toLowerCase();
+    if(first.includes('name')&&first.includes('tag')) start=1;
+    const head = raw.slice(0,start);
+    const arr = raw.slice(start).filter(x=>x.trim());
+    for(let i=arr.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
+    rowsTA.value = [...head, ...arr].join('\n');
+    refreshCounters();
+    status.textContent='Shuffled';
+    setTimeout(()=>status.textContent='—',1500);
+  });
+
+  clearBtn.addEventListener('click', ()=>{
+    if(confirm('Clear all data?')){
+      rowsTA.value=''; refreshCounters(); status.textContent='Cleared';
+      setTimeout(()=>status.textContent='—',1200);
+    }
+  });
+
+  saveBtn.addEventListener('click', ()=>{
+    const pool=parseRows();
+    localStorage.setItem(KEY_POOL, JSON.stringify(pool));
+    localStorage.setItem(KEY_POSMAP, posMapInput.value||'');
+    status.innerHTML = '<span class="ok">✓</span> Saved to browser';
+    setTimeout(()=> status.textContent='—', 2000);
+  });
+
+  exportBtn.addEventListener('click', ()=>{
+    const pool=parseRows(); if(!pool.length) return;
+    const txt = pool.map(x=>`${x.name}${x.positionRaw? ', '+x.positionRaw:''}`).join('\n');
+    const blob=new Blob([txt],{type:'text/plain;charset=utf-8'}); const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='roster.txt'; document.body.appendChild(a); a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url); a.remove();},500);
+  });
+
+  // import
+  function detectDelimiter(line){ const cands=[',',';','\t','|']; let best=',',cnt=-1; for(const d of cands){ const n=line.split(d).length; if(n>cnt){cnt=n;best=d;} } return best; }
+  function parseCSV(text){
+    const t=String(text||'').replace(/\r/g,''); const lines=t.split('\n').filter(l=>l.trim());
+    if(!lines.length) return [];
+    const delim=detectDelimiter(lines[0]); const rows=lines.map(l=>l.split(delim).map(x=>x.trim()));
+    let start=0, nameIdx=0, posIdx=1;
+    const header=rows[0].map(h=>h.toLowerCase());
+    if(header.includes('name')||header.includes('tag')){ nameIdx=Math.max(0,header.indexOf('name')); posIdx=header.indexOf('tag'); if(posIdx===-1) posIdx=1; start=1; }
+    const out=[]; for(let i=start;i<rows.length;i++){ const r=rows[i]; const nm=r[nameIdx]??''; const ps=r[posIdx]??''; if(nm) out.push([nm,ps]); } return out;
+  }
+  function handleFile(file){
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const pairs=parseCSV(reader.result);
+      if(pairs.length){
+        rowsTA.value=pairs.map(p=>`${p[0]}${p[1]? ', '+p[1]:''}`).join('\n');
+        refreshCounters();
+        status.textContent=`Imported ${pairs.length} rows`;
+        setTimeout(()=>status.textContent='—',2000);
+      }
+    };
+    reader.readAsText(file,'utf-8');
+  }
+  importBtn.addEventListener('click', ()=> fileInput.click());
+  fileInput.addEventListener('change', ()=>{ const f=fileInput.files&&fileInput.files[0]; if(f) handleFile(f); fileInput.value=''; });
+
+})();
+</script>
+</body>
+</html>
